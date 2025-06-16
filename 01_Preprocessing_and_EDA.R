@@ -2,11 +2,12 @@
 library(ggplot2)
 library(dplyr)
 library(tidyr)
+library(stringr)
 library(forcats)
 library(treemap)
 
 # Loading the dataset
-filep <- "***" #file path to the rds file
+filep <- "M:/1140_LifeChron_StudentCarolOgira/mrt-sim-2022.rds" #file path to the rds file
 rds_dfs <- readRDS(filep)
 
 
@@ -157,14 +158,14 @@ cod_age_sex <- df_subset %>% group_by(GBD3_RED4, SEX, AGEGRP) %>%
   summarise(tot = n(), n_missing = sum(R_ind == 0), prop = n_missing / tot) %>%
   filter(prop > 0) %>% arrange(desc(tot))
 
-write.csv(cod_age_sex, "output_csv_files/cod_age_sex_missingness.csv")
+#write.csv(cod_age_sex, "output_csv_files/cod_age_sex_missingness.csv")
 
 # COD, age, sex and region
 cod_all <- df_subset %>% group_by(GBD3_RED4, SEX, AGEGRP, REGIOJ) %>%
   summarise(tot = n(), n_missing = sum(R_ind == 0), prop = n_missing / tot) %>%
   filter(prop > 0) %>% arrange(desc(tot))
 
-write.csv(cod_all, "output_csv_files/cod_all_missingness.csv")
+#write.csv(cod_all, "output_csv_files/cod_all_missingness.csv")
 
 
 # ii. characteristics of observed vs missing
@@ -314,3 +315,256 @@ ggplot(df_observed, aes(x = AGEGRP, fill = CD_ISCED_CENSUS)) +
   facet_wrap(~ SEX) +
   labs(x = "Age Group", y = "Proportion") +
   scale_fill_discrete(name = "Education Level")
+
+
+## Model Based Assessment
+
+#libraries
+library(lme4)
+library(ordinal)
+
+
+##:::::::::::Ordinal Logistic Regression::::::::::::::
+
+pred_vars <- c("SEX", "AGEGRP", "REGIOJ")
+
+# Each variable on its own
+onevar_olr_models <- list()
+onevar_olr_results <- list()
+
+for (v in pred_vars) {
+  formula <- as.formula(paste("CD_ISCED_CENSUS_2 ~", v))
+  model <- clm(formula, data = df_observed)
+  onevar_olr_models[[paste(v)]] <- model
+  onevar_olr_results[[paste(v)]] <- summary(model)
+}
+
+# Pairs of variables
+two_var_combos <- list("SEX + AGEGRP", "SEX + REGIOJ", "REGIOJ+AGEGRP")
+
+twovar_olr_models <- list()
+twovar_olr_results <- list()
+
+for (v in two_var_combos) {
+  formula <- as.formula(paste("CD_ISCED_CENSUS_2 ~ +", v))
+  model <- clm(formula, data = df_observed)
+  twovar_olr_models[[paste(v)]] <- model
+  twovar_olr_results[[paste(v)]] <- summary(model)
+}
+
+# three variables
+threevar_olr_model <- clm(CD_ISCED_CENSUS_2 ~ SEX + AGEGRP + REGIOJ, 
+                          data = df_observed)
+threevar_olr_result <- summary(threevar_olr_model)
+
+## Models with GBD3
+
+# random effects only model
+gbd3_olr_model <- clmm(CD_ISCED_CENSUS_2 ~ (1|GBD3_RED4), data = df_observed)
+gbd3_olr_result <- summary(gbd3_olr_model)
+
+# GBD3 with one var
+twovar_olr_re_model <- list()
+twovar_olr_re_results <- list()
+
+for (v in pred_vars) {
+  formula <- as.formula(paste("CD_ISCED_CENSUS_2 ~ (1|GBD3_RED4) +", v))
+  model <- clmm(formula, data = df_observed)
+  twovar_olr_re_model[[paste(v)]] <- model
+  twovar_olr_re_results[[paste(v)]] <- summary(model)
+}
+
+# GBD3 with two vars
+threevar_olr_re_model <- list ()
+threevar_olr_re_results <- list()
+
+for (v in two_var_combos) {
+  formula <- as.formula(paste("CD_ISCED_CENSUS_2 ~ (1|GBD3_RED4)+", v))
+  model <- clmm(formula, data = df_observed)
+  threevar_olr_re_model[[paste(v)]] <- model
+  threevar_olr_re_results[[paste(v)]] <- summary(model)
+}
+
+# ALL variables
+allvars_olr_model <- clmm(CD_ISCED_CENSUS_2 ~ SEX + AGEGRP + REGIOJ +
+                            (1|GBD3_RED4), data = df_observed)
+allvars_olr_results <- summary(allvars_olr_model)
+
+##:::Check for PO assumption
+#creating bin1 and bin2 variables
+df_observed <- df_observed %>% mutate(
+  bin1 = ifelse(CD_ISCED_CENSUS_2 == "Low", 0, 1),
+  bin2 = ifelse(CD_ISCED_CENSUS_2 == "High", 1, 0))
+
+# Each variable on its own
+onevar_glm_models1 <- list() #fit for bin1
+onevar_glm_results1 <- list()
+onevar_glm_models2 <- list() #fit for bin2
+onevar_glm_results2 <- list()
+
+for (v in pred_vars) {
+  formula1 <- as.formula(paste("bin1 ~", v))
+  model1 <- glm(formula1, family = binomial, data = df_observed)
+  onevar_glm_models1[[paste(v)]] <- model1
+  onevar_glm_results1[[paste(v)]] <- summary(model1)
+  
+  #bin2
+  formula2 <- as.formula(paste("bin2 ~", v))
+  model2 <- glm(formula2, family = binomial, data = df_observed)
+  onevar_glm_models2[[paste(v)]] <- model2
+  onevar_glm_results2[[paste(v)]] <- summary(model2)
+}
+
+# Pairs of variables
+twovar_glm_model1 <- list()
+twovar_glm_result1 <- list()
+twovar_glm_model2 <- list()
+twovar_glm_result2 <- list()
+
+for (v in two_var_combos) {
+  formula1 <- as.formula(paste("bin1 ~ +", v))
+  model1 <- glm(formula1, family = binomial, data = df_observed)
+  twovar_glm_model1[[paste(v)]] <- model1
+  twovar_glm_result1[[paste(v)]] <- summary(model1)
+  
+  # bin2
+  formula2 <- as.formula(paste("bin2 ~ +", v))
+  model2 <- glm(formula2, family = binomial, data = df_observed)
+  twovar_glm_model2[[paste(v)]] <- model2
+  twovar_glm_result2[[paste(v)]] <- summary(model2)
+}
+
+# three variables
+threevar_glm_model1 <- glm(bin1 ~ SEX + AGEGRP + REGIOJ, family = binomial,
+                           data = df_observed)
+threevar_glm_result1 <- summary(threevar_glm_model1)
+
+threevar_glm_model2 <- glm(bin2 ~ SEX + AGEGRP + REGIOJ, family = binomial,
+                           data = df_observed)
+threevar_glm_result2 <- summary(threevar_glm_model2)
+
+## Models with GBD3
+
+# random effects only model
+gbd3_glm_model1 <- glmer(bin1 ~ (1|GBD3_RED4), 
+                         family = binomial, data = df_observed)
+gbd3_glm_result1 <- summary(gbd3_glm_model1)
+
+gbd3_glm_model2 <- glmer(bin2 ~ (1|GBD3_RED4), 
+                         family = binomial, data = df_observed)
+gbd3_glm_result2 <- summary(gbd3_glm_model2)
+
+# GBD3 with one var
+twovar_glm_re_model1 <- list()
+twovar_glm_re_result1 <- list()
+twovar_glm_re_model2 <- list()
+twovar_glm_re_result2 <- list()
+
+for (v in pred_vars) {
+  formula1 <- as.formula(paste("bin1 ~ (1|GBD3_RED4) +", v))
+  model1 <- glmer(formula1, family = binomial, data = df_observed)
+  twovar_glm_re_model1[[paste(v)]] <- model1
+  twovar_glm_re_result1[[paste(v)]] <- summary(model1)
+  
+  #bin2
+  formula2 <- as.formula(paste("bin2 ~ (1|GBD3_RED4) +", v))
+  model2 <- glmer(formula2, family = binomial, data = df_observed)
+  twovar_glm_re_model2[[paste(v)]] <- model2
+  twovar_glm_re_result2[[paste(v)]] <- summary(model2)
+}
+
+# GBD3 with two vars
+threevar_glm_re_model1 <- list ()
+threevar_glm_re_result1 <- list()
+threevar_glm_re_model2 <- list ()
+threevar_glm_re_result2 <- list()
+
+for (v in two_var_combos) {
+  formula1 <- as.formula(paste("bin1 ~ (1|GBD3_RED4)+", v))
+  model1 <- glmer(formula1, family = binomial, data = df_observed)
+  threevar_glm_re_model1[[paste(v)]] <- model1
+  threevar_glm_re_result1[[paste(v)]] <- summary(model1)
+  
+  #bin2
+  formula2 <- as.formula(paste("bin2 ~ (1|GBD3_RED4)+", v))
+  model2 <- glmer(formula2, family = binomial, data = df_observed)
+  threevar_glm_re_model2[[paste(v)]] <- model2
+  threevar_glm_re_result2[[paste(v)]] <- summary(model2)
+  
+}
+
+# ALL variables
+allvars_glm_model1 <- glmer(bin1 ~ SEX + AGEGRP + REGIOJ + (1|GBD3_RED4), 
+                            family = binomial, data = df_observed)
+allvars_glm_result1 <- summary(allvars_glm_model1)
+
+allvars_glm_model2 <- glmer(bin2 ~ SEX + AGEGRP + REGIOJ + (1|GBD3_RED4), 
+                            family = binomial, data = df_observed)
+allvars_glm_result2 <- summary(allvars_glm_model2)
+
+
+# partial po models for models whose PO assumption is violated
+
+# 1. GBD3 + agegroup
+#for starting values
+age_only <- clm(CD_ISCED_CENSUS_2 ~ 1, data = df_observed) 
+age_gbd3_model <- clmm2(CD_ISCED_CENSUS_2 ~ 1, nominal = ~ AGEGRP,
+                        random = GBD3_RED4, data = df_observed,
+                        start = c(age_only$alpha ,rep(0,6),log(0.3122)),
+                        control = clmm2.control(method = "nlminb"),  Hess = TRUE)
+
+# 2.1 Sex + Agegroup
+# for starting values
+sex_only <- clm(CD_ISCED_CENSUS_2 ~ SEX, data = df_observed)
+sex_age_model <- clm2(CD_ISCED_CENSUS_2 ~ SEX, nominal = ~ AGEGRP,
+                      data = df_observed, 
+                      start = c(sex_only$alpha, sex_only$beta ,rep(0,6)),
+                      Hess = TRUE)
+
+# 2.2 Sex,age and gbd3
+sex_gbd3_only <- clmm(CD_ISCED_CENSUS_2 ~ SEX + (1|GBD3_RED4),
+                      data = df_observed)
+
+sex_age_gbd3_model <-  clmm2(CD_ISCED_CENSUS_2 ~ SEX, nominal = ~ AGEGRP,
+                             random = GBD3_RED4, data = df_observed, 
+                             start = c(sex_gbd3_only$alpha, sex_gbd3_only$beta ,rep(0,6), log(0.2897)),
+                             control = clmm2.control(method = "nlminb"), Hess = TRUE)
+
+
+# 3.1 Age + Region
+# for starting values
+region_only <- clm(CD_ISCED_CENSUS_2 ~ REGIOJ, data = df_observed)
+region_age_model <- clm2(CD_ISCED_CENSUS_2 ~ REGIOJ, nominal = ~ AGEGRP,
+                         data = df_observed, 
+                         start = c(region_only$alpha, region_only$beta ,rep(0,6)),
+                         Hess = TRUE)
+
+
+# 3.2  Age, Region, GBD3
+region_gbd3 <- clmm(CD_ISCED_CENSUS_2 ~ REGIOJ + (1|GBD3_RED4), data = df_observed)
+
+region_age_model <- clmm2(CD_ISCED_CENSUS_2 ~ REGIOJ, nominal = ~ AGEGRP,
+                          random = GBD3_RED4, data = df_observed, 
+                          start = c(region_gbd3$alpha, region_gbd3$beta ,rep(0,6),log(0.2015)),
+                          Hess = TRUE)
+
+# 4.1 Sex, age, region
+sex_region <- clm(CD_ISCED_CENSUS_2 ~ REGIOJ + SEX, data = df_observed)
+
+all_vars_model <- clm2(CD_ISCED_CENSUS_2 ~ REGIOJ + SEX, nominal = ~ AGEGRP,
+                       data = df_observed, 
+                       start = c(sex_region$alpha, sex_region$beta ,rep(0,6)),
+                       Hess = TRUE)
+
+# 4.2 All vars + gbd3
+sex_region_gbd3 <- clmm(CD_ISCED_CENSUS_2 ~ REGIOJ + SEX + (1|GBD3_RED4),
+                        data = df_observed)
+
+all_vars_ppo_model <- clmm2(CD_ISCED_CENSUS_2 ~ REGIOJ + SEX, 
+                            nominal = ~ AGEGRP, random = GBD3_RED4,
+                            data = df_observed, Hess = TRUE)
+
+
+m2 <- clmm(CD_ISCED_CENSUS_2 ~ REGIOJ + SEX +(1 | GBD3_RED4) ,
+           nominal = ~ AGEGRP,
+           data = df_observed, Hess = TRUE)
